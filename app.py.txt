@@ -1,0 +1,75 @@
+import streamlit as st
+import asyncio
+from TikTokLive import TikTokLiveClient
+from TikTokLive.types.events import CommentEvent
+import openai
+import requests
+import tempfile
+
+st.set_page_config(page_title="AI Host TikTok", layout="wide")
+
+st.title("🎤 AI Host TikTok (ElevenLabs Female Voice)")
+
+with st.sidebar:
+    st.header("⚙️ Pengaturan")
+    username = st.text_input("TikTok Username (tanpa @)")
+    openai_key = st.text_input("OpenAI API Key", type="password")
+    eleven_key = st.text_input("ElevenLabs API Key", type="password")
+    voice_id = st.text_input("ElevenLabs Voice ID", value="EXAVITQu4vr4xnSDxMaL")
+    start_btn = st.button("Mulai")
+
+log_area = st.empty()
+
+if start_btn:
+    if not username or not openai_key or not eleven_key:
+        st.error("⚠️ Lengkapi semua field terlebih dahulu!")
+    else:
+        st.success(f"✅ Terhubung ke Live @{username}... Tunggu komentar masuk!")
+
+        openai.api_key = openai_key
+        client = TikTokLiveClient(unique_id=f"@{username}")
+
+        async def on_comment(event: CommentEvent):
+            user = event.user.nickname
+            comment = event.comment
+            log_area.markdown(f"**💬 {user}:** {comment}")
+
+            # Buat balasan AI
+            completion = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Kamu adalah host perempuan TikTok Live yang ramah, enerjik, dan suka menyapa penonton."},
+                    {"role": "user", "content": comment}
+                ]
+            )
+            reply = completion.choices[0].message["content"].strip()
+            log_area.markdown(f"**🤖 AI:** {reply}")
+
+            # ElevenLabs TTS
+            headers = {
+                "xi-api-key": eleven_key,
+                "Content-Type": "application/json"
+            }
+            data = {
+                "text": reply,
+                "voice_settings": {"stability": 0.65, "similarity_boost": 0.9},
+                "model_id": "eleven_multilingual_v2"
+            }
+            response = requests.post(
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+                headers=headers,
+                json=data
+            )
+
+            if response.status_code == 200:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmpfile:
+                    tmpfile.write(response.content)
+                    st.audio(tmpfile.name, format="audio/mp3")
+            else:
+                log_area.error("❌ Gagal memutar suara ElevenLabs.")
+
+        client.add_listener("comment", on_comment)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(client.start())
